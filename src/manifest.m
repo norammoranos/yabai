@@ -77,6 +77,9 @@
 #include "window_manager.h"
 #include "mouse_handler.h"
 
+static void desktop_controls_edge_update(uint32_t wid, CGPoint point);
+static void desktop_controls_edge_cancel(void);
+
 #include "sa.m"
 #include "mission_control.c"
 #include "event_loop.c"
@@ -93,5 +96,7 @@
 #include "display_manager.c"
 #include "space_manager.c"
 #include "window_manager.c"
+static bool desktop_controls_suppress_dock_gesture(CGEventRef event);
 #include "mouse_handler.c"
+#include "desktop_controls.m"
 #include "yabai.c"

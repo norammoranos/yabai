@@ -68,6 +68,7 @@ extern bool g_verbose;
 #define ARGUMENT_CONFIG_WINDOW_INSERT_FOCUSED "focused"
 #define ARGUMENT_CONFIG_WINDOW_INSERT_FIRST   "first"
 #define ARGUMENT_CONFIG_WINDOW_INSERT_LAST    "last"
+#define ARGUMENT_CONFIG_WINDOW_INSERT_LARGEST "largest"
 #define ARGUMENT_CONFIG_SHADOW_FLT            "float"
 #define ARGUMENT_CONFIG_LAYOUT_BSP            "bsp"
 #define ARGUMENT_CONFIG_LAYOUT_STACK          "stack"
@@ -1249,6 +1250,8 @@ static void handle_domain_config(FILE *rsp, struct token domain, char *message)
                 g_space_manager.window_insertion_point = INSERT_FIRST;
             } else if (token_equals(value, ARGUMENT_CONFIG_WINDOW_INSERT_LAST)) {
                 g_space_manager.window_insertion_point = INSERT_LAST;
+            } else if (token_equals(value, ARGUMENT_CONFIG_WINDOW_INSERT_LARGEST)) {
+                g_space_manager.window_insertion_point = INSERT_LARGEST;
             } else {
                 daemon_fail(rsp, "unknown value '%.*s' given to command '%.*s' for domain '%.*s'\n", value.length, value.text, command.length, command.text, domain.length, domain.text);
             }

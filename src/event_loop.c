@@ -1116,6 +1116,8 @@ static EVENT_HANDLER(DISPLAY_RESIZED)
 
 static EVENT_HANDLER(MOUSE_DOWN)
 {
+    g_mouse_state.native_dragged = false;
+    desktop_controls_edge_cancel();
     if (mission_control_is_active())                     goto out;
     if (g_mouse_state.current_action != MOUSE_MODE_NONE) goto out;
 
@@ -1153,6 +1155,8 @@ out:
 
 static EVENT_HANDLER(MOUSE_UP)
 {
+    desktop_controls_edge_cancel();
+    if (!g_mouse_state.native_dragged) goto err;
     if (mission_control_is_active()) goto out;
     if (!g_mouse_state.window)       goto res;
 
@@ -1186,7 +1190,9 @@ static EVENT_HANDLER(MOUSE_UP)
         struct window_node *a_node = view_find_window_node(src_view, g_mouse_state.window->id);
         struct window_node *b_node = window ? view_find_window_node(dst_view, window->id) : NULL;
 
-        if (a_node && b_node && a_node != b_node) {
+        if (a_node && src_view->sid != dst_view->sid) {
+            mouse_drop_no_target(&g_space_manager, &g_window_manager, src_view, dst_view, g_mouse_state.window, a_node);
+        } else if (a_node && b_node && a_node != b_node) {
             if (g_mouse_state.feedback_node) {
                 g_mouse_state.feedback_node->insert_dir = 0;
                 insert_feedback_destroy(g_mouse_state.feedback_node);
@@ -1247,6 +1253,9 @@ static EVENT_HANDLER(MOUSE_DRAGGED)
 
     CGPoint point = CGEventGetLocation(context);
     debug("%s: %.2f, %.2f\n", __FUNCTION__, point.x, point.y);
+
+    g_mouse_state.native_dragged = true;
+    desktop_controls_edge_update(g_mouse_state.window->id, point);
 
     if (g_mouse_state.current_action == MOUSE_MODE_MOVE) {
         CGPoint new_point = { g_mouse_state.window_frame.origin.x + (point.x - g_mouse_state.down_location.x),

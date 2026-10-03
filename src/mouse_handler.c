@@ -67,6 +67,7 @@ static MOUSE_HANDLER(mouse_handler)
         event_loop_post(&g_event_loop, MOUSE_MOVED, (void *) CFRetain(event), mod);
     } break;
     case /* kCGSEventDockControl */ 30: {
+        if (desktop_controls_suppress_dock_gesture(event)) return NULL;
         int type = CGEventGetIntegerValueField(event, /* kCGEventGestureHIDType */ 110);
         if (type == /* kIOHIDEventTypeDockSwipe */ 23) {
             int motion = CGEventGetIntegerValueField(event, /* kCGEventGestureSwipeMotion */ 123);
@@ -108,6 +109,7 @@ void mouse_window_info_populate(struct mouse_state *ms, struct mouse_window_info
 enum mouse_drop_action mouse_determine_drop_action(struct mouse_state *ms, struct window_node *src_node, struct window *dst_window, CGPoint point)
 {
     CGRect  f    = dst_window->frame;
+    if (ms->drop_action == MOUSE_MODE_SWAP && src_node->window_count == 1 && CGRectContainsPoint(f, point)) return MOUSE_DROP_ACTION_SWAP;
     CGPoint wp   = { point.x - f.origin.x, point.y - f.origin.y };
     CGRect  c    = {{ 0.25f * f.size.width, 0.25f * f.size.height }, { 0.50f * f.size.width, 0.50f * f.size.height }};
     CGPoint t[3] = {{ 0.0f, 0.0f}, { 0.5f * f.size.width, 0.5f * f.size.height }, { f.size.width, 0.0f }};

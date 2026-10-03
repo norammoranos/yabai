@@ -787,6 +787,11 @@ struct window_node *view_add_window_node_with_insertion_point(struct view *view,
                 leaf = view_find_window_node(view, g_window_manager.focused_window_id);
             } else if (g_space_manager.window_insertion_point == INSERT_FIRST) {
                 leaf = window_node_find_first_leaf(view->root);
+            } else if (g_space_manager.window_insertion_point == INSERT_LARGEST) {
+                for (struct window_node *candidate = window_node_find_first_leaf(view->root);
+                     candidate; candidate = window_node_find_next_leaf(candidate)) {
+                    if (!leaf || candidate->area.w * candidate->area.h > leaf->area.w * leaf->area.h) leaf = candidate;
+                }
             } else if (g_space_manager.window_insertion_point == INSERT_LAST) {
                 leaf = window_node_find_last_leaf(view->root);
             }

@@ -95,14 +95,16 @@ enum window_insertion_point
 {
     INSERT_FOCUSED,
     INSERT_FIRST,
-    INSERT_LAST
+    INSERT_LAST,
+    INSERT_LARGEST
 };
 
 static const char *window_insertion_point_str[] =
 {
     "focused",
     "first",
-    "last"
+    "last",
+    "largest"
 };
 
 enum window_node_child
