@@ -274,6 +274,8 @@ static struct balance_node window_node_balance(struct window_node *node, uint32_
     return total_leafs;
 }
 
+#include "view_minimum.c"
+
 static void window_node_split(struct view *view, struct window_node *node, struct window *window)
 {
     struct window_node *left = malloc(sizeof(struct window_node));
@@ -312,6 +314,7 @@ static void window_node_split(struct view *view, struct window_node *node, struc
 
     left->parent  = node;
     right->parent = node;
+    left->view = right->view = view;
 
     node->window_count = 0;
     node->left  = left;
@@ -321,15 +324,22 @@ static void window_node_split(struct view *view, struct window_node *node, struc
     area_make_pair_for_node(view, node);
 }
 
-void window_node_update(struct view *view, struct window_node *node)
+static void window_node_update_feedback(struct window_node *node)
 {
     if (window_node_is_leaf(node)) {
         if (node->insert_dir) insert_feedback_show(node);
     } else {
-        area_make_pair_for_node(view, node);
-        window_node_update(view, node->left);
-        window_node_update(view, node->right);
+        window_node_update_feedback(node->left);
+        window_node_update_feedback(node->right);
     }
+}
+
+void window_node_update(struct view *view, struct window_node *node)
+{
+    struct minimum_choices *choices = minimum_choices_build(view, node);
+    minimum_project(view, choices);
+    minimum_choices_free(choices);
+    window_node_update_feedback(node);
 }
 
 static void window_node_destroy(struct window_node *node)
@@ -373,9 +383,18 @@ void window_node_capture_windows(struct window_node *node, struct window_capture
 
 void window_node_flush(struct window_node *node)
 {
-    struct window_capture *window_list = NULL;
-    window_node_capture_windows(node, &window_list);
-    if (window_list) window_manager_animate_window_list(window_list, ts_buf_len(window_list));
+    struct view *view = node->view;
+    struct window_node *root = view ? view->root : node;
+    for (int pass = 0; pass < 4; ++pass) {
+        if (view) {
+            view_clear_flag(view, VIEW_MINIMUM_DIRTY);
+            window_node_update(view, root);
+        }
+        struct window_capture *window_list = NULL;
+        window_node_capture_windows(root, &window_list);
+        if (window_list) window_manager_animate_window_list(window_list, ts_buf_len(window_list));
+        if (!view || !view_check_flag(view, VIEW_MINIMUM_DIRTY)) break;
+    }
 }
 
 bool window_node_contains_window(struct window_node *node, uint32_t window_id)
@@ -972,6 +991,7 @@ void view_serialize(FILE *rsp, struct view *view, uint64_t flags)
 
 void view_update(struct view *view)
 {
+    view->root->view = view;
     uint32_t did = space_display_id(view->sid);
     CGRect frame = display_bounds_constrained(did, false);
     view->root->area = area_from_cgrect(frame);
@@ -997,6 +1017,7 @@ struct view *view_create(uint64_t sid)
     memset(view->root, 0, sizeof(struct window_node));
 
     view->sid = sid;
+    view->root->view = view;
     view->uuid = SLSSpaceCopyName(g_connection, sid);
 
     view_set_flag(view, VIEW_ENABLE_PADDING);

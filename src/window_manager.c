@@ -333,13 +333,14 @@ enum window_op_error window_manager_move_window_relative(struct window_manager *
 
     struct view *view = window_manager_find_managed_window(wm, window);
     if (view) return WINDOW_OP_ERROR_INVALID_SRC_VIEW;
+    CGRect frame = window_ax_frame(window);
 
     if (type == TYPE_REL) {
-        dx += window->frame.origin.x;
-        dy += window->frame.origin.y;
+        dx += frame.origin.x;
+        dy += frame.origin.y;
     }
 
-    window_manager_animate_window((struct window_capture) { .window = window, .x = dx, .y = dy, .w = window->frame.size.width, .h = window->frame.size.height });
+    window_manager_animate_window((struct window_capture) { .window = window, .x = dx, .y = dy, .w = frame.size.width, .h = frame.size.height });
     return WINDOW_OP_ERROR_SUCCESS;
 }
 
@@ -400,7 +401,8 @@ enum window_op_error window_manager_resize_window_relative(struct window_manager
     } else {
         if (direction == HANDLE_ABS) {
             if (animate) {
-                window_manager_animate_window((struct window_capture) { .window = window, .x = window->frame.origin.x, .y = window->frame.origin.y, .w = dx, .h = dy });
+                CGRect frame = window_ax_frame(window);
+                window_manager_animate_window((struct window_capture) { .window = window, .x = frame.origin.x, .y = frame.origin.y, .w = dx, .h = dy });
             } else {
                 AX_ENHANCED_UI_WORKAROUND(window->application->ref, { window_manager_resize_window(window, dx, dy); });
             }
@@ -728,6 +730,11 @@ void window_manager_animate_window(struct window_capture capture)
 
 void window_manager_set_window_frame(struct window *window, float x, float y, float width, float height)
 {
+    CGRect target = CGRectMake(x, y, width, height);
+    CGRect before = window_ax_frame(window);
+    /* Use a fresh AX frame, rather than the delayed notification cache. */
+    if (CGRectEqualToRect(target, before)) return;
+    AXError resize_result = kAXErrorFailure;
     //
     // NOTE(asmvik): Attempting to check the window frame cache to prevent unnecessary movement and resize calls to the AX API
     // is not reliable because it is possible to perform operations that should be applied, at a higher rate than the AX API events
@@ -746,7 +753,7 @@ void window_manager_set_window_frame(struct window *window, float x, float y, fl
         CFTypeRef size_ref = AXValueCreate(kAXValueTypeCGSize, (void *) &size);
 
         // NOTE(asmvik): Due to macOS constraints (visible screen-area), we might need to resize the window *before* moving it.
-        if (size_ref) AXUIElementSetAttributeValue(window->ref, kAXSizeAttribute, size_ref);
+        if (size_ref) resize_result = AXUIElementSetAttributeValue(window->ref, kAXSizeAttribute, size_ref);
 
         if (position_ref) {
             AXUIElementSetAttributeValue(window->ref, kAXPositionAttribute, position_ref);
@@ -755,10 +762,29 @@ void window_manager_set_window_frame(struct window *window, float x, float y, fl
 
         // NOTE(asmvik): Due to macOS constraints (visible screen-area), we might need to resize the window *after* moving it.
         if (size_ref) {
-            AXUIElementSetAttributeValue(window->ref, kAXSizeAttribute, size_ref);
+            resize_result = AXUIElementSetAttributeValue(window->ref, kAXSizeAttribute, size_ref);
             CFRelease(size_ref);
         }
     });
+    /* Learn only from our synchronous tiled resize, never from a user's drag
+     * or an animation thread. No background probes or continuous resize loop. */
+    if (resize_result == kAXErrorSuccess && !g_window_manager.window_animation_duration && g_mouse_state.window != window) {
+        struct view *view = window_manager_find_managed_window(&g_window_manager, window);
+        if (!view && !window_check_flag(window, WINDOW_FLOAT)) {
+            view = space_manager_find_view(&g_space_manager, window_space(window->id));
+        }
+        struct window_node *node = view ? view_find_window_node(view, window->id) : NULL;
+        if (node && !node->zoom) {
+            CGRect actual = window_ax_frame(window);
+            CGSize minimum = window->minimum_size;
+            if (actual.size.width > width + 1) minimum.width = fmax(minimum.width, actual.size.width);
+            if (actual.size.height > height + 1) minimum.height = fmax(minimum.height, actual.size.height);
+            if (!CGSizeEqualToSize(minimum, window->minimum_size)) {
+                window->minimum_size = minimum;
+                view_set_flag(view, VIEW_MINIMUM_DIRTY);
+            }
+        }
+    }
 }
 
 void window_manager_set_purify_mode(struct window_manager *wm, enum purify_mode mode)
@@ -1057,82 +1083,64 @@ struct window *window_manager_find_recent_managed_window(struct window_manager *
     return window;
 }
 
-struct window *window_manager_find_prev_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
+static struct window *window_manager_projected_stack_member(struct space_manager *sm, struct window_manager *wm,
+                                                            struct window *window, int selector)
 {
     struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
+    struct window_node *node = view ? view_find_window_node(view, window->id) : NULL;
     if (!node) return NULL;
-
-    for (int i = 1; i < node->window_count; ++i) {
-        if (node->window_list[i] == window->id) {
-            return window_manager_find_window(wm, node->window_list[i-1]);
-        }
+    uint32_t *ids = NULL;
+    int count = window_node_projected_stack(node, &ids);
+    if (count < 2) return NULL;
+    int current = 0;
+    for (int i = 0; i < count; ++i) if (ids[i] == window->id) current = i;
+    bool automatic = window_node_overflow_group(node) != NULL;
+    int target;
+    switch (selector) {
+    case -1: target = current - 1; if (automatic && target < 0) target = count - 1; break;
+    case -2: target = current + 1; if (automatic && target == count) target = 0; break;
+    case -3: target = 0; break;
+    case -4: target = count - 1; break;
+    case -5:
+        if (!automatic) return window_manager_find_window(wm, node->window_order[1]);
+        for (int i = 0; i < count; ++i) if (ids[i] == wm->last_window_id)
+            return window_manager_find_window(wm, ids[i]);
+        target = (current + 1) % count;
+        break;
+    default: target = selector - 1; break;
     }
+    return in_range_ii(target, 0, count - 1) ? window_manager_find_window(wm, ids[target]) : NULL;
+}
 
-    return NULL;
+struct window *window_manager_find_prev_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
+{
+    return window_manager_projected_stack_member(sm, wm, window, -1);
 }
 
 struct window *window_manager_find_next_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
 {
-    struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
-    if (!node) return NULL;
-
-    for (int i = 0; i < node->window_count - 1; ++i) {
-        if (node->window_list[i] == window->id) {
-            return window_manager_find_window(wm, node->window_list[i+1]);
-        }
-    }
-
-    return NULL;
+    return window_manager_projected_stack_member(sm, wm, window, -2);
 }
 
 struct window *window_manager_find_first_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
 {
-    struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
-    if (!node) return NULL;
-
-    return node->window_count > 1 ? window_manager_find_window(wm, node->window_list[0]) : NULL;
+    return window_manager_projected_stack_member(sm, wm, window, -3);
 }
 
 struct window *window_manager_find_last_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
 {
-    struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
-    if (!node) return NULL;
-
-    return node->window_count > 1 ? window_manager_find_window(wm, node->window_list[node->window_count-1]) : NULL;
+    return window_manager_projected_stack_member(sm, wm, window, -4);
 }
 
 struct window *window_manager_find_recent_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window)
 {
-    struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
-    if (!node) return NULL;
-
-    return node->window_count > 1 ? window_manager_find_window(wm, node->window_order[1]) : NULL;
+    return window_manager_projected_stack_member(sm, wm, window, -5);
 }
 
 struct window *window_manager_find_window_in_stack(struct space_manager *sm, struct window_manager *wm, struct window *window, int index)
 {
-    struct view *view = space_manager_find_view(sm, space_manager_active_space());
-    if (!view) return NULL;
-
-    struct window_node *node = view_find_window_node(view, window->id);
-    if (!node) return NULL;
-
-    return node->window_count > 1 && in_range_ii(index, 1, node->window_count) ? window_manager_find_window(wm, node->window_list[index-1]) : NULL;
+    if (index < 1) return NULL;
+    return window_manager_projected_stack_member(sm, wm, window, index);
 }
 
 struct window *window_manager_find_largest_managed_window(struct space_manager *sm, struct window_manager *wm)
@@ -2205,7 +2213,10 @@ void window_manager_make_window_floating(struct space_manager *sm, struct window
 
         if (!window_check_flag(window, WINDOW_STICKY)) {
             if ((window_manager_should_manage_window(window)) && (!window_manager_find_managed_window(wm, window))) {
-                struct view *view = space_manager_tile_window_on_space(sm, window, space_manager_active_space());
+                /* Re-managing an existing window must preserve its native Space;
+                 * a rule can be applied while another desktop has focus. */
+                uint64_t sid = window_space(window->id);
+                struct view *view = space_manager_tile_window_on_space(sm, window, sid ? sid : space_manager_active_space());
                 window_manager_add_managed_window(wm, window, view);
             }
         }

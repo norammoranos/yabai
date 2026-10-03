@@ -61,7 +61,10 @@ static CFStringRef ax_window_notification[] =
     WINDOW_PROPERTY_ENTRY("is-hidden",            WINDOW_PROPERTY_IS_HIDDEN,           0x020000000) \
     WINDOW_PROPERTY_ENTRY("is-floating",          WINDOW_PROPERTY_IS_FLOATING,         0x040000000) \
     WINDOW_PROPERTY_ENTRY("is-sticky",            WINDOW_PROPERTY_IS_STICKY,           0x080000000) \
-    WINDOW_PROPERTY_ENTRY("is-grabbed",           WINDOW_PROPERTY_IS_GRABBED,          0x100000000)
+    WINDOW_PROPERTY_ENTRY("is-grabbed",           WINDOW_PROPERTY_IS_GRABBED,          0x100000000) \
+    WINDOW_PROPERTY_ENTRY("minimum-size",         WINDOW_PROPERTY_MINIMUM_SIZE,        0x200000000) \
+    WINDOW_PROPERTY_ENTRY("is-auto-stacked",       WINDOW_PROPERTY_IS_AUTO_STACKED,     0x400000000) \
+    WINDOW_PROPERTY_ENTRY("stack-group-id",        WINDOW_PROPERTY_STACK_GROUP_ID,      0x800000000)
 
 enum window_property
 {
@@ -95,6 +98,7 @@ struct window
     CFStringRef title;
     CGRect frame;
     CGRect windowed_frame;
+    CGSize minimum_size;
     bool is_root;
     bool is_eligible;
     uint8_t notification;

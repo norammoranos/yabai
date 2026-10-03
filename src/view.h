@@ -153,6 +153,7 @@ struct feedback_window
 #define NODE_MAX_WINDOW_COUNT 32
 struct window_node
 {
+    struct view *view;
     struct area area;
     struct window_node *parent;
     struct window_node *left;
@@ -166,6 +167,9 @@ struct window_node
     enum window_node_child child;
     int insert_dir;
     struct feedback_window feedback_window;
+    bool overflow_stack;
+    enum window_node_split minimum_preferred_split;
+    enum window_node_split minimum_projected_split;
 };
 
 enum view_type
@@ -198,6 +202,7 @@ enum view_flag
     VIEW_IS_VALID       = 0x200,
     VIEW_IS_DIRTY       = 0x400,
     VIEW_SPLIT_TYPE     = 0x800,
+    VIEW_MINIMUM_DIRTY  = 0x1000,
 };
 
 struct view
@@ -226,6 +231,8 @@ void insert_feedback_destroy(struct window_node *node);
 
 void window_node_flush(struct window_node *node);
 void window_node_update(struct view *view, struct window_node *node);
+struct window_node *window_node_overflow_group(struct window_node *node);
+int window_node_projected_stack(struct window_node *node, uint32_t **ids);
 bool window_node_contains_window(struct window_node *node, uint32_t window_id);
 int window_node_index_of_window(struct window_node *node, uint32_t window_id);
 void window_node_swap_window_list(struct window_node *a_node, struct window_node *b_node);

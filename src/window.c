@@ -439,6 +439,8 @@ void window_serialize(FILE *rsp, struct window *window, uint64_t flags)
     if ((flags & WINDOW_PROPERTY_SPLIT_TYPE) ||
         (flags & WINDOW_PROPERTY_SPLIT_CHILD) ||
         (flags & WINDOW_PROPERTY_STACK_INDEX) ||
+        (flags & WINDOW_PROPERTY_IS_AUTO_STACKED) ||
+        (flags & WINDOW_PROPERTY_STACK_GROUP_ID) ||
         (flags & WINDOW_PROPERTY_HAS_PARENT_ZOOM) ||
         (flags & WINDOW_PROPERTY_HAS_FULLSCREEN_ZOOM)) {
         view = window_manager_find_managed_window(&g_window_manager, window);
@@ -598,8 +600,31 @@ void window_serialize(FILE *rsp, struct window *window, uint64_t flags)
     if (flags & WINDOW_PROPERTY_STACK_INDEX) {
         if (did_output) fprintf(rsp, ",\n");
 
-        int stack_index = node && node->window_count > 1 ? window_node_index_of_window(node, window->id)+1 : 0;
+        int stack_index = 0;
+        if (node) {
+            uint32_t *ids = NULL;
+            int count = window_node_projected_stack(node, &ids);
+            if (count > 1) for (int i = 0; i < count; ++i) if (ids[i] == window->id) stack_index = i + 1;
+        }
         fprintf(rsp, "\t\"stack-index\":%d", stack_index);
+        did_output = true;
+    }
+
+    if (flags & WINDOW_PROPERTY_MINIMUM_SIZE) {
+        if (did_output) fprintf(rsp, ",\n");
+        fprintf(rsp, "\t\"minimum-size\":{\"w\":%.4f,\"h\":%.4f}", window->minimum_size.width, window->minimum_size.height);
+        did_output = true;
+    }
+    if (flags & WINDOW_PROPERTY_IS_AUTO_STACKED) {
+        if (did_output) fprintf(rsp, ",\n");
+        fprintf(rsp, "\t\"is-auto-stacked\":%s", json_bool(node && window_node_overflow_group(node)));
+        did_output = true;
+    }
+    if (flags & WINDOW_PROPERTY_STACK_GROUP_ID) {
+        if (did_output) fprintf(rsp, ",\n");
+        uint32_t *ids = NULL;
+        int count = node ? window_node_projected_stack(node, &ids) : 0;
+        fprintf(rsp, "\t\"stack-group-id\":%u", count > 1 ? ids[0] : 0);
         did_output = true;
     }
 
@@ -1104,6 +1129,17 @@ struct window *window_create(struct application *application, AXUIElementRef win
     window->subrole = window_ax_subrole(window);
     window->title = window_title(window);
     window->is_root = !window_parent(window->id) || window_is_root(window);
+
+    /* NSOpenPanel/NSSavePanel can report AXStandardWindow, even though they
+     * are utility dialogs. Identify them without localized title matching. */
+    CFTypeRef identifier = NULL;
+    if (AXUIElementCopyAttributeValue(window_ref, kAXIdentifierAttribute, &identifier) == kAXErrorSuccess) {
+        if (CFGetTypeID(identifier) == CFStringGetTypeID() &&
+            (CFEqual(identifier, CFSTR("open-panel")) || CFEqual(identifier, CFSTR("save-panel")))) {
+            window_set_flag(window, WINDOW_FLOAT);
+        }
+        CFRelease(identifier);
+    }
 
     if (window_shadow(window->id)) {
         window_set_flag(window, WINDOW_SHADOW);

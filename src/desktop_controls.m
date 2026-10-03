@@ -173,6 +173,7 @@ static BOOL dc_key_action(CGKeyCode key, CGEventFlags flags)
     if(key==13) { dc_command(@[@"window",@"--close"]);return YES; }
     if(key==49) { dc_command(@[@"window",@"--toggle",@"float"]);return YES; }
     if(key==11) { dc_command(@[@"space",@"--balance"]);return YES; }
+    if(key==33||key==30) { dc_command(@[@"window",@"--focus",key==33?@"stack.prev":@"stack.next"]);return YES; }
     if(key==123||key==124||key==125||key==126) {
         NSString *direction=key==123?@"west":key==124?@"east":key==125?@"south":@"north";
         if(control&&shift) { dc_command(@[@"window",@"--display",direction]);dc_command(@[@"display",@"--focus",direction]); }
