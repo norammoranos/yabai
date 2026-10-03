@@ -19,6 +19,7 @@
 #define VERSION_OPT_SHRT        "-v"
 #define HELP_OPT_LONG           "--help"
 #define HELP_OPT_SHRT           "-h"
+#define CHECK_ACCESSIBILITY_OPT "--check-accessibility"
 
 #define MAJOR  7
 #define MINOR  1
@@ -191,6 +192,7 @@ static void parse_arguments(int argc, char **argv)
                         "    --start-service        Enable, load, and start the launchd service.\n"
                         "    --restart-service      Attempts to restart the service instance.\n"
                         "    --stop-service         Stops a running instance of the service.\n"
+                        "    --check-accessibility  Check permission without prompting or starting the manager.\n"
                         "    --message, -m <msg>    Send message to a running instance of yabai.\n"
                         "    --config, -c <config>  Use the specified configuration file.\n"
                         "    --verbose, -V          Output debug information to stdout.\n"
@@ -205,6 +207,13 @@ static void parse_arguments(int argc, char **argv)
         (string_equals(argv[1], VERSION_OPT_SHRT))) {
         fprintf(stdout, "yabai-v%d.%d.%d\n", MAJOR, MINOR, PATCH);
         exit(EXIT_SUCCESS);
+    }
+
+    if (string_equals(argv[1], CHECK_ACCESSIBILITY_OPT)) {
+        if (argc != 2) error("yabai: --check-accessibility does not accept arguments!\n");
+        bool trusted = AXIsProcessTrusted();
+        fprintf(stdout, "accessibility: %s\n", trusted ? "granted" : "not-granted");
+        exit(trusted ? EXIT_SUCCESS : 3);
     }
 
     if ((string_equals(argv[1], CLIENT_OPT_LONG)) ||
