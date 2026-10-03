@@ -1790,6 +1790,12 @@ static void handle_domain_space(FILE *rsp, struct token domain, char *message)
                     daemon_fail(rsp, "cannot focus space because the display is in the middle of an animation.\n");
                 } else if (result == SPACE_OP_ERROR_IN_MISSION_CONTROL) {
                     daemon_fail(rsp, "cannot focus space because mission-control is active.\n");
+                } else if (result == SPACE_OP_ERROR_INVALID_TYPE) {
+                    daemon_fail(rsp, "direct native focus supports ordinary desktops 1-9 only.\n");
+                } else if (result == SPACE_OP_ERROR_NATIVE_SHORTCUT) {
+                    daemon_fail(rsp, "enable the native Switch to Desktop shortcut (1-9) in System Settings > Keyboard > Keyboard Shortcuts > Mission Control.\n");
+                } else if (result == SPACE_OP_ERROR_FOCUS_FAILED) {
+                    daemon_fail(rsp, "the native desktop shortcut did not activate the requested space.\n");
                 } else if (result == SPACE_OP_ERROR_SCRIPTING_ADDITION) {
                     daemon_fail(rsp, "cannot focus space due to an error with the scripting-addition.\n");
                 }

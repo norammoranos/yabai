@@ -915,6 +915,62 @@ enum space_op_error space_manager_move_space_to_display(struct space_manager *sm
     return SPACE_OP_ERROR_SCRIPTING_ADDITION;
 }
 
+// Native Control+digit shortcuts jump directly, including to empty desktops.
+// Desktop numbers exclude fullscreen Spaces, unlike Mission Control indices.
+static int space_manager_native_desktop_number(uint64_t sid)
+{
+    CFArrayRef displays = SLSCopyManagedDisplaySpaces(g_connection);
+    if (!displays) return 0;
+    int number = 0, result = 0;
+    for (CFIndex i = 0; !result && i < CFArrayGetCount(displays); ++i) {
+        CFDictionaryRef display = CFArrayGetValueAtIndex(displays, i);
+        CFArrayRef spaces = CFDictionaryGetValue(display, CFSTR("Spaces"));
+        for (CFIndex j = 0; spaces && j < CFArrayGetCount(spaces); ++j) {
+            CFDictionaryRef space = CFArrayGetValueAtIndex(spaces, j);
+            CFNumberRef id_ref = CFDictionaryGetValue(space, CFSTR("id64"));
+            uint64_t candidate = 0;
+            if (!id_ref || !CFNumberGetValue(id_ref, kCFNumberSInt64Type, &candidate) || !space_is_user(candidate)) continue;
+            ++number;
+            if (candidate == sid) { result = number; break; }
+        }
+    }
+    CFRelease(displays);
+    return result;
+}
+
+static enum space_op_error space_manager_focus_space_using_keyboard(uint32_t did, uint64_t sid)
+{
+    int number = space_manager_native_desktop_number(sid);
+    if (number < 1 || number > 9) return SPACE_OP_ERROR_INVALID_TYPE;
+    // Read the actual enabled macOS shortcut; preserve user-customized keys.
+    CFPreferencesAppSynchronize(CFSTR("com.apple.symbolichotkeys"));
+    CFPropertyListRef prefs = CFPreferencesCopyAppValue(CFSTR("AppleSymbolicHotKeys"), CFSTR("com.apple.symbolichotkeys"));
+    NSDictionary *hotkeys = (NSDictionary *)prefs;
+    NSDictionary *shortcut = [hotkeys isKindOfClass:[NSDictionary class]] ? hotkeys[[NSString stringWithFormat:@"%d", 117 + number]] : nil;
+    NSArray *parameters = shortcut[@"value"][@"parameters"];
+    bool available = [shortcut[@"enabled"] boolValue] && [parameters isKindOfClass:[NSArray class]] && parameters.count == 3;
+    CGKeyCode key = available ? [parameters[1] unsignedShortValue] : 0;
+    CGEventFlags flags = available ? [parameters[2] unsignedLongLongValue] : 0;
+    if (prefs) CFRelease(prefs);
+    if (!available) return SPACE_OP_ERROR_NATIVE_SHORTCUT;
+    CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    if (!source) return SPACE_OP_ERROR_FOCUS_FAILED;
+    for (int down = 1; down >= 0; --down) {
+        CGEventRef event = CGEventCreateKeyboardEvent(source, key, down);
+        if (!event) { CFRelease(source); return SPACE_OP_ERROR_FOCUS_FAILED; }
+        CGEventSetFlags(event, flags);
+        // Bypass our Caps handler while the physical Caps key is held.
+        CGEventSetIntegerValueField(event, kCGEventSourceUserData, 0x59414241);
+        CGEventPost(kCGHIDEventTap, event);
+        CFRelease(event);
+    }
+    CFRelease(source);
+    // This runs on the IPC worker. Dock completes the native transition while
+    // the main event tap remains responsive; never return a false success.
+    for (int wait = 0; display_space_id(did) != sid && wait < 150; ++wait) usleep(10000);
+    return display_space_id(did) == sid ? SPACE_OP_ERROR_SUCCESS : SPACE_OP_ERROR_FOCUS_FAILED;
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 bool space_manager_focus_space_using_gesture(uint32_t new_did, uint64_t new_sid)
@@ -995,7 +1051,12 @@ enum space_op_error space_manager_focus_space(uint64_t sid)
             display_manager_focus_display(new_did, sid);
         }
     } else {
-        space_manager_focus_space_using_gesture(new_did, sid);
+        NSOperatingSystemVersion version = [[NSProcessInfo processInfo] operatingSystemVersion];
+        if (version.majorVersion >= 27) {
+            return space_manager_focus_space_using_keyboard(new_did, sid);
+        } else if (!space_manager_focus_space_using_gesture(new_did, sid)) {
+            return SPACE_OP_ERROR_FOCUS_FAILED;
+        }
     }
 
     return SPACE_OP_ERROR_SUCCESS;
